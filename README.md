@@ -6,6 +6,8 @@ GitHub Project: https://github.com/lensfun/lensfun GitHub Page: https://lensfun.
 See Andreas Schneider’s tutorial and python scripts:
 https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
 
+Original python program lens_calibrate.py:
+https://gitlab.com/cryptomilk/lens_calibrate
 
 # Seting up Python environment (Ubuntu 22.04)
 
