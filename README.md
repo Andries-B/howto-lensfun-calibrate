@@ -9,7 +9,7 @@ https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
 Original python program lens_calibrate.py:
 https://gitlab.com/cryptomilk/lens_calibrate
 
-# Seting up Python environment (Ubuntu 22.04)
+# Setting up Python environment (Ubuntu 22.04)
 
 - [ ] install darktable, hugin, imagemagick (convert) and gnuplot
 
