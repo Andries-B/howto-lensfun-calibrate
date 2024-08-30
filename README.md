@@ -7,7 +7,7 @@ See Andreas Schneider’s tutorial and python scripts:
 https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
 
 
-# Installing environment (Ubuntu 22.04)
+# Seting up Python environment (Ubuntu 22.04)
 
 - [ ] install darktable, hugin, imagemagick (convert) and gnuplot
 
