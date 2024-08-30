@@ -1,4 +1,0 @@
-py3exiv2>=0.2.1
-numpy
-scipy
-PyPDF2
