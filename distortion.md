@@ -1,10 +1,12 @@
 # Calculating distortion parameters
 
-Summary of https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
+Note: original full text and images at https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
+
+Summary 
 
 ```bash
 Start Hugin
-Select [ Interface | Expert ]
+Select menu [ Interface | Expert ]
 Load tiff file from distortion/exported
 Set the lens type to Normal (rectiliniar) for normal standard lenses
 

@@ -32,7 +32,6 @@ source .venv/bin/activate
 
 ./lens_calibrate distortion
 
-./lens_calibrate tca
 ./lens_calibrate --complex-tca tca
 
 ./lens_calibrate vignetting
