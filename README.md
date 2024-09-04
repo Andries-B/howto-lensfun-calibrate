@@ -41,3 +41,37 @@ source .venv/bin/activate
 ./lens_calibrate ship
 ```
 
+# Vignetting and Panasonic Lumix camera's
+Lumix camera's output 2 different raw files,
+depending on the camera setting vignetting compensation (menu "VIGNETTING.COMP").
+When the vignetting compensation setting is OFF,
+the raw file is a more pure raw file.
+When the vignetting compensation setting is ON,
+the camera applies some sort of vignetting compensation to the raw file.
+Lumix camera's L-mount and Lumix MFT default to VIGNETTING.COMP set to ON,
+but the user can change it in the menu.
+The camera stores the vignetting compensation setting in an exif tag "Shading Compensation" in the raw file.
+E.g. exiftool can read the tag "Shading Compensation".
+
+Lensfun is intended for correcting pure raw images. So all (most?) calibration data in its database are done with vignetting compensation OFF.
+When applying the default calibration profile to an image that has been shot with vignetting compensation ON,
+the corners will be too bright (like over compensation).
+For those images a different calibration profile is needed,
+that takes into account the in camera processing that is already in the image. 
+
+In summary: 1 lens, 1 camera, 1 setting ON or OFF -> 2 different raw files -> 2 different profiles
+
+The lensfun database must contain unique lens names.
+
+Solution: create 2 different profile names, e.g.
+```bash
+<model>my lens</model>
+<model>my lens in camera vignetting compensation ON</model>
+```
+
+In darktable, both lenses show up in the menu. The first profile will be selected by default. From the menu the other can be selected.
+
+Exiftool command to determine vignetting compensation mode from raw file
+```bash
+exiftool -shadingcompensation *.RW2
+```
