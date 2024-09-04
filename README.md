@@ -43,12 +43,12 @@ source .venv/bin/activate
 
 # Vignetting and Panasonic Lumix camera's
 Lumix camera's output 2 different raw files,
-depending on the camera setting vignetting compensation (menu "VIGNETTING.COMP").
+depending on the camera setting "vignetting compensation" (menu "VIGNETTING.COMP").
 When the vignetting compensation setting is OFF,
 the raw file is a more pure raw file.
 When the vignetting compensation setting is ON,
 the camera applies some sort of vignetting compensation to the raw file.
-Lumix camera's L-mount and Lumix MFT default to VIGNETTING.COMP set to ON,
+Lumix L-mount and MFT camera's default to VIGNETTING.COMP set to ON,
 but the user can change it in the menu.
 The camera stores the vignetting compensation setting in an exif tag "Shading Compensation" in the raw file.
 E.g. exiftool can read the tag "Shading Compensation".
@@ -66,7 +66,7 @@ The lensfun database must contain unique lens names.
 Solution: create 2 different profile names, e.g.
 ```bash
 <model>my lens</model>
-<model>my lens in camera vignetting compensation ON</model>
+<model>my lens Lumix vignetting compensation ON</model>
 ```
 
 In darktable, both lenses show up in the menu. The first profile will be selected by default. From the menu the other can be selected.
