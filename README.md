@@ -69,7 +69,7 @@ Solution: create 2 different profile names, e.g.
 <model>my lens Lumix vignetting compensation ON</model>
 ```
 
-In darktable, both lenses show up in the menu. The first profile will be selected by default. From the menu the other can be selected.
+In darktable, both lenses show up in the menu. The first profile will be selected by default. From the menu the other profile can be selected.
 
 Exiftool command to determine vignetting compensation mode from raw file
 ```bash
