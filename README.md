@@ -66,7 +66,7 @@ The lensfun database must contain unique lens names.
 Solution: create 2 different profile names, e.g.
 ```bash
 <model>my lens</model>
-<model>my lens Lumix vignetting compensation ON</model>
+<model>my lens ShadingCompensation On</model>
 ```
 
 In darktable, both lenses show up in the menu. The first profile will be selected by default. From the menu the other profile can be selected.
