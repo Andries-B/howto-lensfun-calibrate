@@ -9,7 +9,7 @@
         <mount>Sony E</mount>
         <cropfactor>1.0</cropfactor>
         <calibration>
-            <!-- Taken with Lumix DC-S5, 2024-09-05, Lumix vignetting compensation: Off (camera defaults to On) -->
+            <!-- Taken with Lumix DC-S5, 2024-09-05, ShadingCompensation OFF (camera defaults to On) -->
             <distortion model="ptlens" focal="90.0" a="0.0" b="0.022" c="-0.017" />
             <tca model="poly3" focal="90.0" br="0.0000950" vr="0.9997216" bb="-0.0001187" vb="1.0002076" />
             <vignetting model="pa" focal="90.0" aperture="2.8" distance="10" k1="-0.9049500" k2="-0.1627540" k3="0.3099013" />

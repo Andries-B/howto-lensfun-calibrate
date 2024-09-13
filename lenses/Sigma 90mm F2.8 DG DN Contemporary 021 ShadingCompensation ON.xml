@@ -3,11 +3,11 @@
 <lensdatabase>
     <lens>
         <maker>Sigma</maker>
-        <model>90mm F2.8 DG DN | Contemporary 021 Lumix vignetting compensation ON</model>
+        <model>90mm F2.8 DG DN | Contemporary 021 ShadingCompensation ON</model>
         <mount>Leica L</mount>
         <cropfactor>1.0</cropfactor>
         <calibration>
-            <!-- Taken with Lumix S5, Lumix vignetting compenstation On -->
+            <!-- Taken with Lumix S5, ShadingCompensation ON -->
             <distortion model="ptlens" focal="90.0" a="0.0" b="0.022" c="-0.017" />
             <tca model="poly3" focal="90.0" br="0.0000835" vr="0.9997500" bb="-0.0001340" vb="1.0002397" />
             <vignetting model="pa" focal="90.0" aperture="2.8" distance="10" k1="-0.7403787" k2="-0.0179186" k3="0.2323016" />

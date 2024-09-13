@@ -36,9 +36,11 @@ Select under Optimize, Geometric [ Custom parameters ]
 A new tab |Optimizer| will appear
 
 Select tab |Optimizer|
-Select the ‘a’, ‘b’ and ‘c’ lens parameters
+Select the 'a', 'b' and 'c' lens parameters
 Click [ Optimize now! ] and accept calculation with Yes
 
-The calculated correction values for ‘a’, ‘b’ and ‘c’ are now in the tab
+The calculated correction values for 'a', 'b' and 'c' are now displayed in the tab
+Right-click on the filename, [ Lens | Save lens to ini file ]
+Find 'a', 'b' and 'c' in the ini file; copy them to lenses.conf
 
 ```

@@ -2,12 +2,12 @@
 
     <lens>
         <maker>Sigma</maker>
-        <model>17mm F4 DG DN | Contemporary 023 Lumix vignetting compensation ON</model>
+        <model>17mm F4 DG DN | Contemporary 023 ShadingCompensation ON</model>
         <mount>Leica L</mount>
         <mount>Sony E</mount>
         <cropfactor>1.0</cropfactor>
         <calibration>
-            <!-- Taken with Lumix S5, Lumix vignetting compenstation On -->
+            <!-- Taken with Lumix S5, ShadingCompensation ON -->
             <distortion model="ptlens" focal="17" a="0.016" b="-0.057" c="0.014"/>
             <tca model="poly3" focal="17.0" vr="1.0001143" vb="0.9999594" />
             <distortion model="ptlens" focal="17.0" a="0.017687" b="-0.0614442" c="0.0139454" />
