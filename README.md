@@ -14,32 +14,64 @@ https://gitlab.com/cryptomilk/lens_calibrate
 - [ ] install darktable, hugin, imagemagick (convert) and gnuplot
 
 ```bash
-sudo apt-get install python3-pip python3-venv
-sudo apt-get install build-essential python-all-dev libexiv2-dev libboost-python-dev
+$ sudo apt-get install python3-pip python3-venv
+$ sudo apt-get install build-essential python-all-dev libexiv2-dev libboost-python-dev
 
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -r requirements.txt
+$ python3 -m venv .venv
+$ source .venv/bin/activate
+$ python3 -m pip install --upgrade pip
+$ python3 -m pip install -r requirements.txt
 ```
 
 
 # Running lens_calibrate.py
 ```bash
-source .venv/bin/activate
+$ source .venv/bin/activate
 
-./lens_calibrate init
+$ ./lens_calibrate init
 
-./lens_calibrate distortion
+$ ./lens_calibrate distortion
 
-./lens_calibrate --complex-tca tca
+$ ./lens_calibrate --complex-tca tca
 
-./lens_calibrate vignetting
+$ ./lens_calibrate vignetting
 
-./lens_calibrate generate_xml
-
-./lens_calibrate ship
+$ ./lens_calibrate generate_xml
 ```
+
+
+# Contributing your lensfun.xml
+
+To contribute your calibration data data for your lens to the lensfun project, execute the script with the following command:
+
+```bash
+$ ./lens_calibrate ship
+Created lensfun_calibration.tar.gz
+Open a bug at https://github.com/lensfun/lensfun/issues/ with the data.
+```
+
+This will create a tarball with all the required data. Now go to
+
+    https://github.com/lensfun/lensfun/issues/
+
+and open a bug (New issue) using the following subject:
+
+```bash
+Calibration data for <lens model>
+```
+
+And for the description just use:
+```bash
+Please add the attached lens data to the lensfun data base.
+```
+
+Attach the lensfun_calibration.tar.gz to the bugreport.
+
+Upload verification images using the calibration service upload server and refer to issue:
+
+https://wilson.bronger.org/calibration
+
+
 
 # Vignetting and Panasonic Lumix camera's
 Lumix camera's output 2 different raw files,
