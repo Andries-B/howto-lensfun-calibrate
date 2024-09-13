@@ -51,9 +51,7 @@ Open a bug at https://github.com/lensfun/lensfun/issues/ with the data.
 ```
 
 This will create a tarball with all the required data. Now go to
-
-    https://github.com/lensfun/lensfun/issues/
-
+https://github.com/lensfun/lensfun/issues/
 and open a bug (New issue) using the following subject:
 
 ```bash
@@ -68,7 +66,6 @@ Please add the attached lens data to the lensfun data base.
 Attach the lensfun_calibration.tar.gz to the bugreport.
 
 Upload verification images using the calibration service upload server and refer to issue:
-
 https://wilson.bronger.org/calibration
 
 
