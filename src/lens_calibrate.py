@@ -47,11 +47,11 @@ import tarfile
 import tempfile
 import concurrent.futures
 from subprocess import DEVNULL
-from scipy.optimize.minpack import leastsq
+from scipy.optimize import leastsq
 
 from pyexiv2.metadata import ImageMetadata
 
-from PyPDF2 import PdfFileMerger
+from PyPDF2 import PdfMerger
 
 # Sidecar for loading into hugin
 # Applies a neutral basecurve and enables sharpening
@@ -527,7 +527,7 @@ def plot_pdf(plot_file):
     return True
 
 def merge_final_pdf(final_pdf, pdf_dir):
-    pdf_merger = PdfFileMerger()
+    pdf_merger = PdfMerger()
 
     pdf_files = []
 
@@ -1142,7 +1142,7 @@ def run_ship():
         return
 
     tar_files = [ "lensfun.xml", "tca.pdf", "vignetting.pdf" ]
-    tar_name = "lensfun_calibration.tar.xz"
+    tar_name = "lensfun_calibration.tar.gz"
 
     vignetting_dir = 'vignetting/exported'
     if os.path.exists(vignetting_dir):
@@ -1153,7 +1153,7 @@ def run_ship():
 
                 tar_files.append(os.path.join(vignetting_dir, filename))
 
-    tar = tarfile.open(tar_name, 'w:xz')
+    tar = tarfile.open(tar_name, 'w:gz')
 
     for f in tar_files:
         if not os.path.exists(f):
@@ -1175,7 +1175,7 @@ def run_ship():
 
     tar.close()
 
-    print("Created lensfun_calibration.tar.xz")
+    print("Created lensfun_calibration.tar.gz")
     print("Open a bug at https://github.com/lensfun/lensfun/issues/ with the data.")
 
 class CustomDescriptionFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
