@@ -23,9 +23,11 @@ Note: original full text and images at https://pixls.us/articles/create-lens-cal
 
 
 ## Check raw files
+```bash
 exiftool -lens* <raw image file>
 exiftool -ShadingCompensation <raw image file>
 exiftool -*stabilisation* <raw image file>
+```
 
 ## Tip
 After all raw samples for vignetting have been taken, run this:
