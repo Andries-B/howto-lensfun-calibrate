@@ -1,1295 +1,500 @@
 #!/usr/bin/env python3
-
-#######################################################################
 #
-# A script to calibrate camera lenes for lensfun
-#
-# Copyright (c) 2012-2016 Torsten Bronger <bronger@physik.rwth-aachen.de>
-# Copyright (c) 2018-2019 Andreas Schneider <asn@cryptomilk.org>
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <http://www.gnu.org/licenses/>.
-#
-#######################################################################
-#
-# Requires: python3-exiv2
-# Requires: python3-numpy
-# Requires: python3-scipy
-# Requires: python3-PyPDF2
-#
-# Requires: darktable (darktable-cli)
-# Requires: hugin-tools (tca_correct)
-# Requires: ImageMagick (convert)
-# Requires: gnuplot
-#
+# Copyright 2012-2016 Torsten Bronger <bronger@physik.rwth-aachen.de>
 
-import os
-import argparse
-import configparser
-import codecs
-import re
-import math
-import multiprocessing
-import numpy as np
-import subprocess
-import shutil
-import tarfile
-import tempfile
-import concurrent.futures
-from subprocess import DEVNULL
-from scipy.optimize import leastsq
+missing_packages = set()
 
-from pyexiv2.metadata import ImageMetadata
-
-from PyPDF2 import PdfMerger
-
-# Sidecar for loading into hugin
-# Applies a neutral basecurve and enables sharpening
-DARKTABLE_DISTORTION_SIDECAR = '''<?xml version="1.0" encoding="UTF-8"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about=""
-    xmlns:exif="http://ns.adobe.com/exif/1.0/"
-    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
-    xmlns:dc="http://purl.org/dc/elements/1.1/"
-    xmlns:darktable="http://darktable.sf.net/"
-   exif:DateTimeOriginal="2019:05:01 16:01:36"
-   xmp:Rating="1"
-   xmpMM:DerivedFrom="distortion.img"
-   darktable:xmp_version="3"
-   darktable:raw_params="0"
-   darktable:auto_presets_applied="1"
-   darktable:history_end="3"
-   darktable:iop_order_version="2">
-   <darktable:masks_history>
-    <rdf:Seq/>
-   </darktable:masks_history>
-   <darktable:history>
-    <rdf:Seq>
-     <rdf:li
-      darktable:num="0"
-      darktable:operation="basecurve"
-      darktable:enabled="1"
-      darktable:modversion="6"
-      darktable:params="gz09eJxjYIAAruuLrbmuK1vPmilpN2vmTLuzZ87YGRsb2zMwONgbGxcD6QYoHgVDCbAhsZkwZBFxCgB+Wg6p"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="23.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="1"
-      darktable:operation="colorin"
-      darktable:enabled="1"
-      darktable:modversion="6"
-      darktable:params="gz48eJzjYRgFowABWAbaAaNgwAEAPRQAEQ=="
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="27.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="2"
-      darktable:operation="colorout"
-      darktable:enabled="1"
-      darktable:modversion="5"
-      darktable:params="gz35eJxjZBgFo4CBAQAEEAAC"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="58.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-    </rdf:Seq>
-   </darktable:history>
-  </rdf:Description>
- </rdf:RDF>
-</x:xmpmeta>
-'''
-
-# Sidecar for TCA corrections
-#
-# * disable basecurve
-# * disable shapren
-# * disable highlight reconstruction
-# * set colorin to Linear Rec2020 RGB
-# * set colorin working space to Linear Rec2020 RGB
-# * set colorout to Linear Rec2020 RGB
-#
-# Setting colorin and colorout to Linear Rec2020 RGB makes it basically a no-op
-# and passes through camera RGB values.
-DARKTABLE_TCA_SIDECAR = '''<?xml version="1.0" encoding="UTF-8"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about=""
-    xmlns:exif="http://ns.adobe.com/exif/1.0/"
-    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
-    xmlns:darktable="http://darktable.sf.net/"
-   exif:DateTimeOriginal="2017:09:30 20:09:00"
-   xmp:Rating="1"
-   xmpMM:DerivedFrom="tca.img"
-   darktable:xmp_version="3"
-   darktable:raw_params="0"
-   darktable:auto_presets_applied="1"
-   darktable:history_end="5"
-   darktable:iop_order_version="2">
-   <darktable:masks_history>
-    <rdf:Seq/>
-   </darktable:masks_history>
-   <darktable:history>
-    <rdf:Seq>
-     <rdf:li
-      darktable:num="0"
-      darktable:operation="basecurve"
-      darktable:enabled="0"
-      darktable:modversion="6"
-      darktable:params="gz09eJxjYICAL3eYbKcsErU1fXPdVmRLpl1B+T07pyon+6WC0fb9R6rtGRgaoHgUDCXAhsRmwpBFxCkAufUQ3Q=="
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="23.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="1"
-      darktable:operation="sharpen"
-      darktable:enabled="0"
-      darktable:modversion="1"
-      darktable:params="000000400000003f0000003f"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="53.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="2"
-      darktable:operation="highlights"
-      darktable:enabled="0"
-      darktable:modversion="2"
-      darktable:params="000000000000803f00000000000000000000803f"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="4.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="3"
-      darktable:operation="colorin"
-      darktable:enabled="1"
-      darktable:modversion="6"
-      darktable:params="gz48eJxjYRgFowABWAbaAaNgwAEAHHQACQ=="
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="27.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="4"
-      darktable:operation="colorout"
-      darktable:enabled="1"
-      darktable:modversion="5"
-      darktable:params="gz35eJxjYRgFo4CBAQAKKAAF"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="58.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-    </rdf:Seq>
-   </darktable:history>
-  </rdf:Description>
- </rdf:RDF>
-</x:xmpmeta>
-'''
-
-# Sidecar for vignetting corrections
-# * disable basecurve
-# * disable shapren
-# * disable highlight reconstruction
-# * set colorin to camera color matrix
-# * set colorin working space to Linear Rec2020 RGB
-# * set colorout to Linear Rec2020 RGB
-DARKTABLE_VIGNETTING_SIDECAR = '''<?xml version="1.0" encoding="UTF-8"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="XMP Core 4.4.0-Exiv2">
- <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-  <rdf:Description rdf:about=""
-    xmlns:exif="http://ns.adobe.com/exif/1.0/"
-    xmlns:xmp="http://ns.adobe.com/xap/1.0/"
-    xmlns:xmpMM="http://ns.adobe.com/xap/1.0/mm/"
-    xmlns:darktable="http://darktable.sf.net/"
-   exif:DateTimeOriginal="2017:09:30 20:09:00"
-   xmp:Rating="1"
-   xmpMM:DerivedFrom="vignetting.img"
-   darktable:xmp_version="3"
-   darktable:raw_params="0"
-   darktable:auto_presets_applied="1"
-   darktable:history_end="5"
-   darktable:iop_order_version="2">
-   <darktable:masks_history>
-    <rdf:Seq/>
-   </darktable:masks_history>
-   <darktable:history>
-    <rdf:Seq>
-     <rdf:li
-      darktable:num="0"
-      darktable:operation="basecurve"
-      darktable:enabled="0"
-      darktable:modversion="6"
-      darktable:params="gz09eJxjYICAL3eYbKcsErU1fXPdVmRLpl1B+T07pyon+6WC0fb9R6rtGRgaoHgUDCXAhsRmwpBFxCkAufUQ3Q=="
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="23.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="1"
-      darktable:operation="sharpen"
-      darktable:enabled="0"
-      darktable:modversion="1"
-      darktable:params="000000400000003f0000003f"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="53.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="2"
-      darktable:operation="highlights"
-      darktable:enabled="0"
-      darktable:modversion="2"
-      darktable:params="000000000000803f00000000000000000000803f"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="4.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="3"
-      darktable:operation="colorout"
-      darktable:enabled="1"
-      darktable:modversion="5"
-      darktable:params="gz35eJxjYRgFo4CBAQAKKAAF"
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="58.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-     <rdf:li
-      darktable:num="4"
-      darktable:operation="colorin"
-      darktable:enabled="1"
-      darktable:modversion="6"
-      darktable:params="gz48eJzjZhgFowABWAbaAaNgwAEAOQAAEA=="
-      darktable:multi_name=""
-      darktable:multi_priority="0"
-      darktable:iop_order="27.0000000000000"
-      darktable:blendop_version="9"
-      darktable:blendop_params="gz11eJxjYGBgkGAAgRNODGiAEV0AJ2iwh+CRyscOAAdeGQQ="/>
-    </rdf:Seq>
-   </darktable:history>
-  </rdf:Description>
- </rdf:RDF>
-</x:xmpmeta>
-'''
-
-def get_max_worker_count():
-    max_workers = int(multiprocessing.cpu_count() / 2)
-
-    if max_workers < 1:
-        return 1
-
-    return max_workers
-
-def is_raw_file(filename):
-    raw_file_extensions = [
-            ".3FR", ".ARI", ".ARW", ".BAY", ".CRW", ".CR2", ".CAP", ".DCS",
-            ".DCR", ".DNG", ".DRF", ".EIP", ".ERF", ".FFF", ".IIQ", ".K25",
-            ".KDC", ".MEF", ".MOS", ".MRW", ".NEF", ".NRW", ".OBM", ".ORF",
-            ".PEF", ".PTX", ".PXN", ".R3D", ".RAF", ".RAW", ".RWL", ".RW2",
-            ".RWZ", ".SR2", ".SRF", ".SRW", ".X3F", ".JPG", ".JPEG", ".TIF",
-            ".TIFF",
-        ]
-    file_ext = os.path.splitext(filename)[1]
-
-    return file_ext.upper() in raw_file_extensions
-
-def has_exif_tag(data, tag):
-    return tag in data
-
-def image_read_exif(filename):
-    focal_length = 0.0
-    aperture = 0.0
-
-    data = ImageMetadata(filename)
-
-    # This reads the metadata and closes the file
-    data.read()
-
-    lens_model = None
-    tag = 'Exif.Photo.LensModel'
-    if has_exif_tag(data, tag):
-        lens_model = data[tag].value
-    else:
-        tag = 'Exif.NikonLd3.LensIDNumber'
-        if has_exif_tag(data, tag):
-            lens_model = data[tag].human_value
-
-        tag = 'Exif.Panasonic.LensType'
-        if has_exif_tag(data, tag):
-            lens_model = data[tag].value
-
-        tag = 'Exif.Sony1.LensID'
-        if has_exif_tag(data, tag):
-            lens_model = data[tag].human_value
-
-        tag = 'Exif.Minolta.LensID'
-        if has_exif_tag(data, tag):
-            lens_model = data[tag].human_value
-
-    if lens_model is None:
-       lens_model = 'Standard'
-
-    tag = 'Exif.Photo.FocalLength'
-    if has_exif_tag(data, tag):
-        focal_length = float(data[tag].value)
-    else:
-        print("%s doesn't have Exif.Photo.FocalLength set. " % (filename) +
-              "Please fix it manually.")
-
-    tag = 'Exif.Photo.FNumber'
-    if has_exif_tag(data, tag):
-        aperture = float(data[tag].value)
-    else:
-        print("%s doesn't have Exif.Photo.FNumber set. " % (filename) +
-              "Please fix it manually.")
-
-    return { "lens_model" : lens_model,
-             "focal_length" : focal_length,
-             "aperture" : aperture }
-
-def write_sidecar_file(sidecar_file, content):
-    if not os.path.isfile(sidecar_file):
-        try:
-            with open(sidecar_file, 'w') as f:
-                f.write(content)
-        except OSError:
-            return False
-
-    return True
-
-# convert raw file to 16bit tiff
-def convert_raw_for_distortion(input_file, sidecar_file, output_file=None):
-    if output_file is None:
-        output_file = ("%s.tif" % os.path.splitext(input_file)[0])
-
-    if not os.path.exists(output_file):
-        print("Converting %s to %s ..." % (input_file, output_file), flush=True)
-
-        with tempfile.TemporaryDirectory(prefix="lenscal_") as dt_tmp_dir:
-            dt_log_path = os.path.join(dt_tmp_dir, "dt.log")
-
-            with open(dt_log_path, 'w') as dt_log_file:
-                cmd = [
-                        "darktable-cli",
-                        input_file,
-                        sidecar_file,
-                        output_file,
-                        "--core",
-                        "--configdir", dt_tmp_dir,
-                        "--conf", "plugins/lighttable/export/iccintent=0", # perceptual
-                        "--conf", "plugins/lighttable/export/iccprofile=sRGB",
-                        "--conf", "plugins/lighttable/export/style=none",
-                        "--conf", "plugins/imageio/format/tiff/bpp=16",
-                        "--conf", "plugins/imageio/format/tiff/compress=5"
-                    ]
-
-                try:
-                    subprocess.check_call(cmd, stdout=dt_log_file, stderr=subprocess.STDOUT)
-                except subprocess.CalledProcessError:
-                    with open(dt_log_path, 'r') as fin:
-                        print(fin.read())
-                    raise
-                except OSError:
-                    print("Could not find darktable-cli")
-                    return None
-
-    return output_file
-
-def convert_raw_for_tca(input_file, sidecar_file, output_file=None):
-    if output_file is None:
-        output_file = ("%s.ppm" % os.path.splitext(input_file)[0])
-
-    if not os.path.exists(output_file):
-        with tempfile.TemporaryDirectory(prefix="lenscal_") as dt_tmp_dir:
-            dt_log_path = os.path.join(dt_tmp_dir, "dt.log")
-
-            with open(dt_log_path, 'w') as dt_log_file:
-                cmd = [
-                        "darktable-cli",
-                        input_file,
-                        sidecar_file,
-                        output_file,
-                        "--core",
-                        "--configdir", dt_tmp_dir,
-                        "--conf", "plugins/lighttable/export/iccprofile=image",
-                        "--conf", "plugins/lighttable/export/style=none",
-                    ]
-
-                try:
-                    subprocess.check_call(cmd, stdout=dt_log_file, stderr=subprocess.STDOUT)
-                except subprocess.CalledProcessError:
-                    with open(dt_log_path, 'r') as fin:
-                        print(fin.read())
-                    raise
-                except OSError:
-                    print("Could not find darktable-cli")
-
-    return output_file
-
-def convert_raw_for_vignetting(input_file, sidecar_file, output_file=None):
-    if output_file is None:
-        output_file = ("%s.ppm" % os.path.splitext(input_file)[0])
-
-    if not os.path.exists(output_file):
-        with tempfile.TemporaryDirectory(prefix="lenscal_") as dt_tmp_dir:
-            dt_log_path = os.path.join(dt_tmp_dir, "dt.log")
-
-            with open(dt_log_path, 'w') as dt_log_file:
-                cmd = [
-                        "darktable-cli",
-                        input_file,
-                        sidecar_file,
-                        output_file,
-                        "--width", "250",
-                        "--core",
-                        "--configdir", dt_tmp_dir,
-                        "--conf", "plugins/lighttable/export/iccprofile=image",
-                        "--conf", "plugins/lighttable/export/style=none",
-                    ]
-
-                try:
-                    subprocess.check_call(cmd, stdout=dt_log_file, stderr=subprocess.STDOUT)
-                except subprocess.CalledProcessError:
-                    with open(dt_log_path, 'r') as fin:
-                        print(fin.read())
-                    raise
-                except OSError:
-                    print("Could not find darktable-cli")
-
-    return output_file
-
-def convert_ppm_for_vignetting(input_file):
-    output_file = ("%s.pgm" % os.path.splitext(input_file)[0])
-
-    # Convert the ppm file to a pgm (grayscale) file
-    if not os.path.exists(output_file):
-        cmd = [ "convert",
-                "-colorspace",
-                "RGB",
-                input_file,
-                "-set",
-                "colorspace",
-                "RGB",
-                output_file ]
-        try:
-            subprocess.check_call(cmd, stdout=DEVNULL, stderr=subprocess.STDOUT)
-        except subprocess.CalledProcessError:
-            raise
-        except OSError:
-            print("Could not find convert")
-
-    return output_file
-
-def plot_pdf(plot_file):
+import subprocess, os, os.path, sys, multiprocessing, math, re, contextlib, glob, codecs, struct, argparse
+try:
+    import numpy
+except ImportError:
+    missing_packages.add("python3-numpy")
+try:
+    from scipy.optimize import leastsq
+except ImportError:
+    missing_packages.add("python3-scipy")
+def test_program(program, package_name):
     try:
-        gnuplot = shutil.which("gnuplot")
-    except shutil.Error:
-        return False
-
-    cmd = [ gnuplot, plot_file ]
-    try:
-        subprocess.check_call(cmd, stdout=DEVNULL, stderr=subprocess.STDOUT)
-    except subprocess.CalledProcessError:
-        raise
+        subprocess.call([program], stdout=open(os.devnull, "w"), stderr=open(os.devnull, "w"))
     except OSError:
-        print("Could not find gnuplot")
-        return False
+        missing_packages.add(package_name)
+convert_program = "convert"
+if os.name == 'nt':
+    # on Windows, there is a system binary called convert.exe to convert FAT partitions to NTFS, so we need to call
+    # the ImageMagick's convert.exe by full path; this path can be set in the environment variable IM_CONVERT,
+    # or the default installation path is used
+    convert_program = os.environ.get("IM_CONVERT", "C:\\Program Files\\ImageMagick\\convert.exe")
+test_program("dcraw_emu", "libraw-bin")
+test_program(convert_program, "imagemagick")
+test_program("tca_correct", "hugin-tools")
+test_program("exiv2", "exiv2")
+if missing_packages:
+    print("The following packages are missing (Ubuntu packages, names may differ on other systems):\n    {0}\nAbort.".
+          format("  ".join(missing_packages)))
+    sys.exit()
+try:
+    dcraw_version = float(subprocess.Popen(["dcraw_emu"], stdout=subprocess.PIPE).communicate()[0].splitlines()[1].
+                          rpartition("v")[2])
+except:
+    dcraw_version = 0
+h_option = [] if 8.99 < dcraw_version < 9.18 else ["-h"]
 
-    return True
 
-def merge_final_pdf(final_pdf, pdf_dir):
-    pdf_merger = PdfMerger()
+parser = argparse.ArgumentParser(description="Calibration generator for Lensfun.")
+parser.add_argument("--complex-tca", action="store_true", help="switches on non-linear polynomials for TCA")
+args = parser.parse_args()
 
-    pdf_files = []
 
-    for path, directories, files in os.walk(pdf_dir):
-        for filename in files:
-            if os.path.splitext(filename)[1] != '.pdf':
-                continue
+def unquote_filename_component(name):
+    """Unescapes `name` so that special escaping is replaced by the actual
+    characters.  This undoes the work of
+    `tools.calibration_webserver.process_upload.quote_directory` (or more
+    accurately, the ``quote_filename_component`` function therein).
 
-            pdf_files.append(filename)
+    :param str name: the name to be unescaped
 
-    if len(pdf_files) == 0:
-        return
+    :returns:
+      the unescaped name
 
-    pdf_files.sort()
+    :rtype: str
+    """
+    assert "/" not in name
+    name = re.sub(r"\{(\d+)\}", lambda match: chr(int(match.group(1))), name)
+    name = name.replace("##", "=").replace("++", "*").replace("___", ":").replace("__", "/").replace("_", " ")
+    return name
 
-    for pdf in pdf_files:
-        pdf_merger.append(os.path.join(pdf_dir, pdf))
 
-    pdf_merger.write(final_pdf)
-    pdf_merger.close()
-
-def create_lenses_config(lenses_exif_group):
-    config = configparser.ConfigParser()
-    for lenses in lenses_exif_group:
-        config[lenses] = {
-                'maker' : '[unknown]',
-                'mount' : '[unknown]',
-                'cropfactor' : '1.0',
-                'aspect_ratio' : '3:2',
-                'type' : 'normal'
-                }
-        for exif_data in lenses_exif_group[lenses]:
-            distortion = ("distortion(%.1fmm)" % exif_data['focal_length'])
-            config[lenses][distortion] = '0.0, 0.0, 0.0'
-    with open('lenses.conf', 'w') as configfile:
-        config.write(configfile)
-
-    print("A template has been created for distortion corrections as lenses.conf.")
-    print("Please fill this file with proper information. The most important")
-    print("values are:")
-    print("")
-    print("maker:        is the manufacturer or the lens, e.g. 'FE 16-35mm F2.8 GM'")
-    print("mount:        is the name of the mount system, e.g. 'Sony E'")
-    print("cropfactor:   is the crop factor of the camera as a float, e.g. '1.0' for")
-    print("              full frame")
-    print("aspect_ratio: is the aspect_ratio, e.g. '3:2'")
-    print("type:         is the type of the lens, e.g. 'normal' for rectilinear")
-    print("              lenses. Other possible values are: stereographic, equisolid,")
-    print("              stereographic, panoramic or fisheye.")
-    print("")
-    print("You can find details for distortion calculations here:")
-    print("")
-    print("https://pixls.us/articles/create-lens-calibration-data-for-lensfun/")
-
-    return
-
-def parse_lenses_config(filename):
-    config = configparser.ConfigParser()
-    config.read(filename)
-
-    lenses = {}
-
-    for section in config.sections():
-        lenses[section] = {}
-        lenses[section]['distortion'] = {}
-        lenses[section]['tca'] = {}
-        lenses[section]['vignetting'] = {}
-
-        for key in config[section]:
-            if key.startswith('distortion'):
-                focal_length = key[11:len(key) - 3]
-                lenses[section]['distortion'][focal_length] = config[section][key]
-            else:
-                lenses[section][key] = config[section][key]
-
-    return lenses
-
-def tca_correct(input_file, original_file, exif_data, complex_tca=False):
-    basename = os.path.splitext(input_file)[0]
-    output_file = ("%s.tca" % basename)
-    gp_filename = ("%s.gp" % basename)
-    pdf_filename = ("%s.pdf" % basename)
-
-    if not os.path.exists(output_file):
-        print("Running TCA corrections for %s ..." % (input_file), flush=True)
-
-        tca_complexity = 'v'
-        if complex_tca:
-            tca_complexity = 'bv'
-        cmd = [ "tca_correct", "-o", tca_complexity, input_file ]
-        try:
-            output = subprocess.check_output(cmd, stderr=DEVNULL)
-        except subprocess.CalledProcessError:
-            raise
-        except OSError:
-            print("Could not find tca_correct")
-            return None
-
-        tca_data_match = re.match(r"-r [.0]+:(?P<br>[-.0-9]+):[.0]+:(?P<vr>[-.0-9]+) -b [.0]+:(?P<bb>[-.0-9]+):[.0]+:(?P<vb>[-.0-9]+)",
-                            output.decode('ascii'))
-        if tca_data_match is None:
-            print("Could not find tca correction data")
-            return None
-
-        tca_data = tca_data_match.groupdict()
-
-        tca_config = configparser.ConfigParser()
-        tca_config[exif_data['lens_model']] = {
-                'focal_length' : exif_data['focal_length'],
-                'complex_tca' : complex_tca,
-                'tca' : output.decode('ascii'),
-                'br' : tca_data['br'],
-                'vr' : tca_data['vr'],
-                'bb' : tca_data['bb'],
-                'vb' : tca_data['vb'],
-                }
-        with open(output_file, "w") as tcafile:
-            tca_config.write(tcafile)
-
-        if complex_tca:
-            with codecs.open(gp_filename, "w", encoding="utf-8") as c:
-                c.write('set term pdf\n')
-                c.write('set print "%s"\n' % (input_file))
-                c.write('set output "%s"\n' % (pdf_filename))
-                c.write('set fit logfile "/dev/null"\n')
-                c.write('set grid\n')
-                c.write('set title "%s, %0.1f mm, f/%0.1f\\n%s" noenhanced\n' %
-                        (exif_data['lens_model'],
-                         exif_data['focal_length'],
-                         exif_data['aperture'],
-                         original_file))
-                c.write('plot [0:1.8] %s * x**2 + %s title "red", %s * x**2 + %s title "blue"\n' %
-                        (tca_data['br'], tca_data["vr"], tca_data["bb"], tca_data["vb"]))
-
-            plot_pdf(gp_filename)
-
-def load_pgm(filename):
-    header = None
-    width = None
-    height = None
-    maxval = None
-
-    with open(filename, 'rb') as f:
-        buf = f.read()
+@contextlib.contextmanager
+def chdir(dirname=None):
+    curdir = os.getcwd()
     try:
-        header, width, height, maxval = re.search(
-            b"(^P5\s(?:\s*#.*[\r\n])*"
-            b"(\d+)\s(?:\s*#.*[\r\n])*"
-            b"(\d+)\s(?:\s*#.*[\r\n])*"
-            b"(\d+)\s(?:\s*#.*[\r\n]\s)*)", buf).groups()
-    except AttributeError:
-        raise ValueError("Not a NetPGM file: '%s'" % filename)
+        if dirname is not None:
+            os.chdir(dirname)
+        yield
+    finally:
+        os.chdir(curdir)
 
-    f.close()
 
-    width = int(width)
-    height = int(height)
-    maxval = int(maxval)
+class Lens(object):
 
-    if maxval == 255:
-        dt = np.dtype(np.uint8)
-    elif maxval == 65535:
-        dt = np.dtype(np.uint16)
-    elif maxval == 4294967295:
-        dt = np.dtype(np.float32)
+    def __init__(self, name, maker, mount, cropfactor, aspect_ratio, type_):
+        self.name, self.maker, self.mount, self.cropfactor, self.aspect_ratio, self.type_ = \
+                    name, maker, mount, cropfactor, aspect_ratio, type_
+        self.calibration_lines = []
+        self.minimal_focal_length = float("inf")
+
+    def add_focal_length(self, focal_length):
+        self.minimal_focal_length = min(self.minimal_focal_length, focal_length)
+
+    def __lt__(self, other):
+        return self.minimal_focal_length < other.minimal_focal_length
+
+    def write(self, outfile):
+        type_line = "        <type>{0}</type>\n".format(self.type_) if self.type_ else ""
+        outfile.write("""
+    <lens>
+        <maker>{0}</maker>
+        <model>{1}</model>
+        <mount>{2}</mount>
+        <cropfactor>{3}</cropfactor>
+""".format(self.maker, self.name, self.mount, self.cropfactor))
+        if self.type_:
+            outfile.write("        <type>{0}</type>\n".format(self.type_))
+        if self.aspect_ratio and self.aspect_ratio != "3:2":
+            outfile.write("        <aspect-ratio>{0}</aspect-ratio>\n".format(self.aspect_ratio))
+        if self.calibration_lines:
+            outfile.write("        <calibration>\n")
+            for line in self.calibration_lines:
+                outfile.write("            {0}\n".format(line))
+            outfile.write("        </calibration>\n")
+        outfile.write("    </lens>\n")
+
+
+def generate_raw_conversion_call(filename, dcraw_options):
+    basename, extension = os.path.splitext(filename)
+    extension = extension[1:]
+    if extension.lower() in ["jpg", "jpeg", "tif"]:
+        result = [convert_program, filename]
+        if "-4" in dcraw_options:
+            result.extend(["-colorspace", "RGB", "-depth", "16"])
+        result.append("tiff:-" if "-" in dcraw_options else basename + ".tiff")
+        return result
     else:
-        raise ValueError("Not a NetPGM file: '%s'" % filename)
-    dt = dt.newbyteorder('B')
-
-    shape = np.frombuffer(buf,
-                          dtype = dt,
-                          count = width * height,
-                          offset = len(header))
-
-    return width, height, shape.reshape((height, width))
-
-def fit_function(radius, A, k1, k2, k3):
-    return A * (1 + k1 * radius**2 + k2 * radius**4 + k3 * radius**6)
-
-def calculate_vignetting(input_file, original_file, exif_data, distance):
-    basename = os.path.splitext(input_file)[0]
-    all_points_filename = ("%s.all_points.dat" % basename)
-    bins_filename = ("%s.bins.dat" % basename)
-    pdf_filename = ("%s.pdf" % basename)
-    gp_filename = ("%s.gp" % basename)
-    vig_filename = ("%s.vig" % basename)
-
-    if os.path.exists(vig_filename):
-        return
-
-    print("Generating vignetting data for %s ... " % input_file, flush=True)
-
-    # This loads the pgm file and we get the image data and an one dimensional array
-    # image_data = [1009, 1036, 1071, 1106, 1140, 1169, 1202, 1239, ...]
-    width, height, image_data = load_pgm(input_file)
-
-    # Get the half diagonal of the image
-    half_diagonal = math.hypot(width // 2, height // 2)
-    maximal_radius = 1
-
-    # Only remember pixel intensities which are in the given radius
-    radii, intensities = [], []
-    for y in range(image_data.shape[0]):
-        for x in range(image_data.shape[1]):
-            radius = math.hypot(x - width // 2, y - height // 2) / half_diagonal
-            if radius <= maximal_radius:
-                radii.append(radius)
-                intensities.append(image_data[y,x])
-
-    with open(all_points_filename, 'w') as f:
-        for radius, intensity in zip(radii, intensities):
-            f.write("%f %d\n" % (radius, intensity))
-
-    number_of_bins = 16
-    bins = [[] for i in range(number_of_bins)]
-    for radius, intensity in zip(radii, intensities):
-        # The zeroth and the last bin are only half bins which means that their
-        # means are skewed.  But this is okay: For the zeroth, the curve is
-        # supposed to be horizontal anyway, and for the last, it underestimates
-        # the vignetting at the rim which is a good thing (too much of
-        # correction is bad).
-        bin_index = int(round(radius / maximal_radius * (number_of_bins - 1)))
-        bins[bin_index].append(intensity)
-    radii = [i / (number_of_bins - 1) * maximal_radius for i in range(number_of_bins)]
-    intensities = [np.median(bin) for bin in bins]
-
-    with open(bins_filename, 'w') as f:
-        for radius, intensity in zip(radii, intensities):
-            f.write("%f %d\n" % (radius, intensity))
-
-    radii, intensities = np.array(radii), np.array(intensities)
-
-    A, k1, k2, k3 = leastsq(lambda p, x, y: y - fit_function(x, *p), [30000, -0.3, 0, 0], args=(radii, intensities))[0]
-
-    vig_config = configparser.ConfigParser()
-    vig_config[exif_data['lens_model']] = {
-                'focal_length' : exif_data['focal_length'],
-                'aperture' : exif_data['aperture'],
-                'distance' : distance,
-                'A' : ('%.7f' % A),
-                'k1' : ('%.7f' % k1),
-                'k2' : ('%.7f' % k2),
-                'k3' : ('%.7f' % k3),
-                }
-    with open(vig_filename, "w") as vigfile:
-        vig_config.write(vigfile)
-
-    if distance == float("inf"):
-        distance = "∞"
-
-    with codecs.open(gp_filename, "w", encoding="utf-8") as c:
-        c.write('set term pdf\n')
-        c.write('set print "%s"\n' % (input_file))
-        c.write('set output "%s"\n' % (pdf_filename))
-        c.write('set fit logfile "/dev/null"\n')
-        c.write('set grid\n')
-        c.write('set title "%s, %0.1f mm, f/%0.1f, %s m\\n%s" noenhanced\n' %
-                (exif_data['lens_model'],
-                 exif_data['focal_length'],
-                 exif_data['aperture'],
-                 distance,
-                 original_file))
-        c.write('plot "%s" with dots title "samples", ' %
-                all_points_filename)
-        c.write('"%s" with linespoints lw 4 title "average", ' %
-                bins_filename)
-        c.write('%f * (1 + (%f) * x**2 + (%f) * x**4 + (%f) * x**6) title "fit"\n' %
-                (A, k1, k2, k3))
-
-    plot_pdf(gp_filename)
-
-def init():
-    # Create directory structure
-    dirlist = ['distortion', 'tca', 'vignetting']
-
-    for d in dirlist:
-        if os.path.isfile(d):
-            print("ERROR: '%s' is a file, can't create directory!" % d)
-            return
-        elif not os.path.isdir(d):
-            os.mkdir(d)
-
-    print("The following directory structure has been created in the "
-          "local directory\n\n"
-          "1. distortion - Put RAW file created for distortion in here\n"
-          "2. tca        - Put chromatic abbrevation RAW files in here\n"
-          "3. vignetting - Put RAW files to calculate vignetting in here\n")
-
-def create_distortion_correction(export_path, path, filename, sidecar_file):
-    input_file = os.path.join(path, filename)
-    output_file = os.path.join(path, "exported", ("%s.tif" % os.path.splitext(filename)[0]))
-
-    # Convert RAW files to TIF for hugin
-    output_file = convert_raw_for_distortion(input_file, sidecar_file, output_file)
-
-    return True
-
-def run_distortion():
-    lenses_config_exists = os.path.isfile('lenses.conf')
-    lenses_exif_group = {}
-
-    print('Running distortion corrections ...')
-
-    if not os.path.isdir("distortion"):
-        print("No distortion directory, you have to run init first!")
-        return
-
-    export_path = os.path.join("distortion", "exported")
-    if not os.path.isdir(export_path):
-        os.mkdir(export_path)
-
-    sidecar_file = os.path.join(export_path, "distortion.xmp")
-    if not write_sidecar_file(sidecar_file, DARKTABLE_DISTORTION_SIDECAR):
-        print("Failed to write sidecar_file: %s" % sidecar_file)
-        return
-
-    # Parse EXIF data
-    for path, directories, files in os.walk('distortion'):
-        for filename in files:
-            if path != "distortion":
-                continue
-            if not is_raw_file(filename):
-                continue
-
-            input_file = os.path.join(path, filename)
-
-            exif_data = image_read_exif(input_file)
-            if exif_data is not None:
-                if exif_data['lens_model'] not in lenses_exif_group:
-                    lenses_exif_group[exif_data['lens_model']] = []
-                lenses_exif_group[exif_data['lens_model']].append(exif_data)
-
-                # Add focal length to file name for easier identification
-                if exif_data['focal_length'] > 1.0:
-                    output_file = os.path.join(path, "exported", ("%s_%dmm.tif" % (os.path.splitext(filename)[0], exif_data['focal_length'])))
-
-    # Create TIFF for hugin
-    with concurrent.futures.ProcessPoolExecutor(max_workers=get_max_worker_count()) as executor:
-        result_futures = []
-
-        for path, directories, files in os.walk('distortion'):
-            for filename in files:
-                if path != "distortion":
-                    continue
-                if not is_raw_file(filename):
-                    continue
-                future = executor.submit(create_distortion_correction, export_path, path, filename, sidecar_file)
-                result_futures.append(future)
-
-        for f in concurrent.futures.as_completed(result_futures):
-            if f.result():
-                print("OK")
-
-    if not lenses_config_exists:
-        sorted_lenses_exif_group = {}
-        for lenses in sorted(lenses_exif_group):
-            # TODO: Remove duplicates?
-            sorted_lenses_exif_group[lenses] = sorted(lenses_exif_group[lenses], key=lambda exif : exif['focal_length'])
-
-        create_lenses_config(sorted_lenses_exif_group)
-
-def create_tca_correction(export_path, path, filename, sidecar_file, complex_tca):
-    # Convert RAW
-    input_file = os.path.join(path, filename)
-
-    # Read EXIF data
-    exif_data = image_read_exif(input_file)
-
-    # Convert RAW file to ppm
-    output_file = os.path.join(path, "exported", ("%s.ppm" % os.path.splitext(filename)[0]))
-
-    print("Processing %s ... " % (input_file), flush=True)
-    output_file = convert_raw_for_tca(input_file, sidecar_file, output_file)
-
-    tca_correct(output_file, input_file, exif_data, complex_tca)
-
-    return True
-
-def run_tca(complex_tca):
-    if not os.path.isdir("tca"):
-        print("No tca directory, you have to run init first!")
-        return
-
-    export_path = os.path.join("tca", "exported")
-    if not os.path.isdir(export_path):
-        os.mkdir(export_path)
-
-    sidecar_file = os.path.join(export_path, "tca.xmp")
-    if not write_sidecar_file(sidecar_file, DARKTABLE_TCA_SIDECAR):
-        print("Failed to write sidecar_file: %s" % sidecar_file)
-        return
-
-    with concurrent.futures.ProcessPoolExecutor(max_workers=get_max_worker_count()) as executor:
-        result_futures = []
-
-        for path, directories, files in os.walk('tca'):
-            for filename in files:
-                if path != "tca":
-                    continue
-                if not is_raw_file(filename):
-                    continue
-
-                future = executor.submit(create_tca_correction, export_path, path, filename, sidecar_file, complex_tca)
-
-        for f in concurrent.futures.as_completed(result_futures):
-            if f.result():
-                print("OK")
-
-    if complex_tca:
-        merge_final_pdf("tca.pdf", "tca/exported")
-
-def create_vignetting_correction(export_path, path, filename, sidecar_file, distance):
-    # Convert RAW files to NetPGM
-    input_file = os.path.join(path, filename)
-
-    # Read EXIF data
-    exif_data = image_read_exif(input_file)
-
-    # Convert the RAW file to ppm
-    output_file = os.path.join(export_path, ("%s.ppm" % os.path.splitext(filename)[0]))
-    preview_file = os.path.join(export_path, ("%s.jpg" % os.path.splitext(filename)[0]))
-
-    print("Processing %s ... " % (input_file), flush=True)
-
-    output_file = convert_raw_for_vignetting(input_file, sidecar_file, output_file)
-
-    # Create vignetting PGM files (grayscale)
-    pgm_file = convert_ppm_for_vignetting(output_file)
-
-    # Calculate vignetting data
-    calculate_vignetting(pgm_file, input_file, exif_data, distance)
-
-    # Create preview jpg
-    convert_raw_for_vignetting(input_file, sidecar_file, preview_file)
-
-    return True
-
-def run_vignetting():
-    if not os.path.isdir("vignetting"):
-        print("No vingetting directory, you have to run init first!")
-        return
-
-    export_path = os.path.join("vignetting", "exported")
-    if not os.path.isdir(export_path):
-        os.mkdir(export_path)
-
-    sidecar_file = os.path.join(export_path, "vignetting.xmp")
-    if not write_sidecar_file(sidecar_file, DARKTABLE_DISTORTION_SIDECAR):
-        print("Failed to write sidecar_file: %s" % sidecar_file)
-        return
-
-    with concurrent.futures.ProcessPoolExecutor(max_workers=get_max_worker_count()) as executor:
-        result_futures = []
-
-        for path, directories, files in os.walk('vignetting'):
-            for filename in files:
-                distance = float("inf")
-
-                if not is_raw_file(filename):
-                    continue
-
-                # Ignore the export path
-                if path == export_path:
-                    continue
-
-                if path != "vignetting":
-                    d = os.path.basename(path)
-                    try:
-                        distance = float(d)
-                    except:
-                        continue
-
-                future = executor.submit(create_vignetting_correction, export_path, path, filename, sidecar_file, distance)
-                result_futures.append(future)
-
-        for f in concurrent.futures.as_completed(result_futures):
-            if f.result():
-                print("OK")
-
-    # Create final PDF
-    merge_final_pdf("vignetting.pdf", "vignetting/exported")
-
-def run_generate_xml():
-    print("Generating lensfun.xml")
-
-    lenses_config_exists = os.path.isfile('lenses.conf')
-
-    if not lenses_config_exists:
-        print("lenses.conf doesn't exist, run distortion first")
-        return
-
-    # We need maker, model, mount, crop_factor etc.
-    lenses = parse_lenses_config('lenses.conf')
-
-    # Scan tca files and add to lenses
-    for path, directories, files in os.walk('tca/exported'):
-        for filename in files:
-            if os.path.splitext(filename)[1] != '.tca':
-                continue
-
-            config = configparser.ConfigParser()
-            config.read(os.path.join(path, filename))
-
-            for lens_model in config.sections():
-                focal_length = config[lens_model]['focal_length']
-                if not focal_length in lenses[lens_model]['tca']:
-                    lenses[lens_model]['tca'][focal_length] = {}
-
-                for key in config[lens_model]:
-                    if key != 'focal_length':
-                        lenses[lens_model]['tca'][focal_length][key] = config[lens_model][key]
-
-    # Scan vig files and add to lenses
-    for path, directories, files in os.walk('vignetting/exported'):
-        for filename in files:
-            if os.path.splitext(filename)[1] != '.vig':
-                continue
-
-            config = configparser.ConfigParser()
-            config.read(os.path.join(path, filename))
-
-            for lens_model in config.sections():
-                focal_length = config[lens_model]['focal_length']
-                if not focal_length in lenses[lens_model]['vignetting']:
-                    lenses[lens_model]['vignetting'][focal_length] = {}
-
-                aperture = config[lens_model]['aperture']
-                if not aperture in lenses[lens_model]['vignetting'][focal_length]:
-                    lenses[lens_model]['vignetting'][focal_length][aperture] = {}
-
-                distance = config[lens_model]['distance']
-                if not distance in lenses[lens_model]['vignetting'][focal_length][aperture]:
-                    lenses[lens_model]['vignetting'][focal_length][aperture][distance] = {}
-
-                for key in config[lens_model]:
-                    if key != 'focal_length' and key != 'aperture' and key != 'distance':
-                        lenses[lens_model]['vignetting'][focal_length][aperture][distance][key] = config[lens_model][key]
-
-    # write lenses to xml
-    with open('lensfun.xml', 'w') as f:
-        f.write('<lensdatabase>\n')
-        for lens_model in lenses:
-            f.write('    <lens>\n')
-            f.write('        <maker>%s</maker>\n' % lenses[lens_model]['maker'])
-            f.write('        <model>%s</model>\n' % lens_model)
-            f.write('        <mount>%s</mount>\n' % lenses[lens_model]['mount'])
-            f.write('        <cropfactor>%s</cropfactor>\n' % lenses[lens_model]['cropfactor'])
-            if lenses[lens_model]['type'] != 'normal':
-                f.write('        <type>%s</type>\n' % lenses[lens_model]['type'])
-
-            # Add calibration data
-            f.write('        <calibration>\n')
-
-            # Add distortion entries
-            focal_lengths = lenses[lens_model]['distortion'].keys()
-            for focal_length in sorted(focal_lengths, key=float):
-                data = list(map(str.strip, lenses[lens_model]['distortion'][focal_length].split(',')))
-                if data[1] is None:
-                    f.write('            '
-                            '<distortion model="poly3" focal="%s" k1="%s" />\n' %
-                            (focal_length, data[0]))
+        return ["dcraw_emu", "-T", "-t", "0"] + dcraw_options + [filename]
+
+
+raw_file_extensions = ["3fr", "ari", "arw", "bay", "crw", "cr2", "cr3", "cap", "dcs", "dcr", "dng", "drf", "eip", "erf", "fff",
+                       "iiq", "k25", "kdc", "mef", "mos", "mrw", "nef", "nrw", "obm", "orf", "pef", "ptx", "pxn", "r3d",
+                       "raf", "raw", "rwl", "rw2", "rwz", "sr2", "srf", "srw", "x3f", "jpg", "jpeg", "tif"]
+def find_raw_files():
+    result = []
+    for file_extension in raw_file_extensions:
+        result.extend(glob.glob("*." + file_extension))
+        result.extend(glob.glob("*." + file_extension.upper()))
+    return result
+
+def browse_directory(directory):
+    if os.path.exists(directory):
+        with chdir(directory):
+            for filename in find_raw_files():
+                full_filename = os.path.join(directory, filename)
+                match = filepath_pattern.match(os.path.splitext(filename)[0])
+                if match:
+                    file_exif_data[full_filename] = \
+                        (unquote_filename_component(match.group("lens_model")),
+                         float(match.group("focal_length")), float(match.group("aperture")))
                 else:
-                    f.write('            '
-                            '<distortion model="ptlens" focal="%s" a="%s" b="%s" c="%s" />\n' %
-                            (focal_length, data[0], data[1], data[2]))
+                    exiv2_candidates.append(full_filename)
 
-            # Add tca entries
-            focal_lengths = lenses[lens_model]['tca'].keys()
-            for focal_length in sorted(focal_lengths, key=float):
-                data = lenses[lens_model]['tca'][focal_length]
-                if data['complex_tca'] == 'True':
-                    f.write('            '
-                            '<tca model="poly3" focal="%s" br="%s" vr="%s" bb="%s" vb="%s" />\n' %
-                            (focal_length, data['br'], data['vr'], data['bb'], data['vb']))
+def call_exiv2(candidate_group):
+    exiv2_process = subprocess.Popen(
+        ["exiv2", "-PEkt", "-g", "Exif.Photo.LensModel", "-g", "Exif.Photo.FocalLength", "-g", "Exif.Photo.FNumber"]
+        + candidate_group, stdout=subprocess.PIPE)
+    lines = exiv2_process.communicate()[0].decode("utf-8").splitlines()
+    assert exiv2_process.returncode in [0, 253]
+    result = {}
+    for line in lines:
+        filename, data = line.split("Exif.Photo.")
+        filename = filename.rstrip()
+        if not filename:
+            assert len(candidate_group) == 1
+            filename = candidate_group[0]
+        fieldname, field_value = data.split(None, 1)
+        exif_data = result.setdefault(filename, [None, float("nan"), float("nan")])
+        if fieldname == "LensModel":
+            exif_data[0] = field_value
+        elif fieldname == "FocalLength":
+            exif_data[1] = float(field_value.partition("mm")[0])
+        elif fieldname == "FNumber":
+            exif_data[2] = float(field_value.partition("F")[2])
+    for filename, exif_data in result.copy().items():
+        result[filename] = tuple(exif_data)
+    return result
+
+def generate_tca_tiffs(filename):
+    tca_filename = filename + ".tca"
+    if not os.path.exists(tca_filename):
+        tiff_filename = os.path.splitext(filename)[0] + ".tiff"
+        if not os.path.exists(tiff_filename):
+            subprocess.check_call(generate_raw_conversion_call(filename, ["-4", "-o", "0", "-M", "-Z", "tiff"]))
+        return filename, tiff_filename, tca_filename
+    return None, None, None
+
+def evaluate_image_set(exif_data, filepaths):
+    output_filename = "{0}--{1}--{2}--{3}".format(*exif_data).replace(" ", "_").replace("/", "__").replace(":", "___"). \
+                      replace("*", "++").replace("=", "##")
+    gnuplot_filename = "{0}.gp".format(output_filename)
+    try:
+        gnuplot_line = codecs.open(gnuplot_filename, encoding="utf-8").readlines()[3]
+        match = re.match(r'     [-e.0-9]+ \* \(1 \+ \((?P<k1>[-e.0-9]+)\) \* x\*\*2 \+ \((?P<k2>[-e.0-9]+)\) \* x\*\*4 \+ '
+                         r'\((?P<k3>[-e.0-9]+)\) \* x\*\*6\) title "fit"', gnuplot_line)
+        k1, k2, k3 = [float(k) for k in match.groups()]
+    except IOError:
+        radii, intensities = [], []
+        for filepath in filepaths:
+            maximal_radius = 1
+            try:
+                sidecar_file = open(os.path.splitext(filepath)[0] + ".txt")
+            except FileNotFoundError:
+                pass
+            else:
+                for line in sidecar_file:
+                    if line.startswith("maximal_radius"):
+                        maximal_radius = float(line.partition(":")[2])
+            dcraw_process = subprocess.Popen(generate_raw_conversion_call(filepath, ["-4", "-M", "-o", "0", "-Z", "-"] + h_option),
+                                             stdout=subprocess.PIPE)
+            image_data = subprocess.check_output(
+                [convert_program, "tiff:-", "-set", "colorspace", "RGB", "-resize", "250", "pgm:-"], stdin=dcraw_process.stdout,
+                stderr=open(os.devnull, "w"))
+            width, height = None, None
+            header_size = 0
+            for i, line in enumerate(image_data.splitlines(True)):
+                header_size += len(line)
+                if i == 0:
+                    assert line == b"P5\n", "Wrong image format (must be NetPGM binary)"
                 else:
-                    f.write('            '
-                            '<tca model="poly3" focal="%s" vr="%s" vb="%s" />\n' %
-                            (focal_length, data['vr'], data['vb']))
+                    line = line.partition(b"#")[0].strip()
+                    if line:
+                        if not width:
+                            width, height = line.split()
+                            width, height = int(width), int(height)
+                        else:
+                            assert line == b"65535", "Wrong grayscale depth: {} (must be 65535)".format(int(line))
+                            break
+            half_diagonal = math.hypot(width // 2, height // 2)
+            image_data = struct.unpack("!{0}s{1}H".format(header_size, width * height), image_data)[1:]
+            for i, intensity in enumerate(image_data):
+                y, x = divmod(i, width)
+                radius = math.hypot(x - width // 2, y - height // 2) / half_diagonal
+                if radius <= maximal_radius:
+                    radii.append(radius)
+                    intensities.append(intensity)
+        all_points_filename = "{0}-all_points.dat".format(output_filename)
+        with open(all_points_filename, "w") as outfile:
+            for radius, intensity in zip(radii, intensities):
+                outfile.write("{0} {1}\n".format(radius, intensity))
+        number_of_bins = 16
+        bins = [[] for i in range(number_of_bins)]
+        for radius, intensity in zip(radii, intensities):
+            # The zeroth and the last bin are only half bins which means that their
+            # means are skewed.  But this is okay: For the zeroth, the curve is
+            # supposed to be horizontal anyway, and for the last, it underestimates
+            # the vignetting at the rim which is a good thing (too much of
+            # correction is bad).
+            bin_index = int(round(radius / maximal_radius * (number_of_bins - 1)))
+            bins[bin_index].append(intensity)
+        radii = [i / (number_of_bins - 1) * maximal_radius for i in range(number_of_bins)]
+        intensities = [numpy.median(bin) for bin in bins]
+        bins_filename = "{0}-bins.dat".format(output_filename)
+        with open(bins_filename, "w") as outfile:
+            for radius, intensity in zip(radii, intensities):
+                outfile.write("{0} {1}\n".format(radius, intensity))
+        radii, intensities = numpy.array(radii), numpy.array(intensities)
 
-            # Add vignetting entries
-            focal_lengths = lenses[lens_model]['vignetting'].keys()
-            for focal_length in sorted(focal_lengths, key=float):
-                apertures = lenses[lens_model]['vignetting'][focal_length].keys()
-                for aperture in sorted(apertures, key=float):
-                    distances = lenses[lens_model]['vignetting'][focal_length][aperture].keys()
-                    for distance in sorted(distances, key=float):
-                        data = lenses[lens_model]['vignetting'][focal_length][aperture][distance]
+        def fit_function(radius, A, k1, k2, k3):
+            return A * (1 + k1 * radius**2 + k2 * radius**4 + k3 * radius**6)
 
-                        if distance == 'inf':
-                            distance = '1000'
+        A, k1, k2, k3 = leastsq(lambda p, x, y: y - fit_function(x, *p), [30000, -0.3, 0, 0], args=(radii, intensities))[0]
 
-                        _distances = [ distance ]
+        lens_name, focal_length, aperture, distance = exif_data
+        if distance == float("inf"):
+            distance = "∞"
+        codecs.open(gnuplot_filename, "w", encoding="utf-8").write("""set grid
+set title "{6}, {7} mm, f/{8}, {9} m"
+plot "{0}" with dots title "samples", "{1}" with linespoints lw 4 title "average", \\
+     {2} * (1 + ({3}) * x**2 + ({4}) * x**4 + ({5}) * x**6) title "fit"
+pause -1
+""".format(all_points_filename, bins_filename, A, k1, k2, k3, lens_name, focal_length, aperture, distance))
 
-                        # If we only have an infinite distance, we need to write two values
-                        if len(distances) == 1 and distance == '1000':
-                            _distances = [ '10', '1000' ]
+    return (k1, k2, k3)
 
-                        for _distance in _distances:
-                            f.write('            '
-                                    '<vignetting model="pa" focal="%s" aperture="%s" distance="%s" '
-                                    'k1="%s" k2="%s" k3="%s" />\n' %
-                                    (focal_length, aperture, _distance,
-                                     data['k1'], data['k2'], data['k3']))
 
-            f.write('        </calibration>\n')
-            f.write('    </lens>\n')
-        f.write('</lensdatabase>\n')
+if __name__ == '__main__':
 
-def run_ship():
-    if not os.path.exists("lensfun.xml"):
-        print("lensfun.xml not found, please run the calibration steps first!")
-        return
+    #
+    # Collect EXIF data
+    #
 
-    tar_files = [ "lensfun.xml", "tca.pdf", "vignetting.pdf" ]
-    tar_name = "lensfun_calibration.tar.gz"
+    file_exif_data = {}
+    filepath_pattern = re.compile(r"(?P<lens_model>.+)--(?P<focal_length>[0-9.]+)mm--(?P<aperture>[0-9.]+)")
+    missing_lens_model_warning_printed = False
+    exiv2_candidates = []
 
-    vignetting_dir = 'vignetting/exported'
-    if os.path.exists(vignetting_dir):
-        for path, directories, files in os.walk(vignetting_dir):
-            for filename in files:
-                if os.path.splitext(filename)[1] != '.jpg':
-                    continue
 
-                tar_files.append(os.path.join(vignetting_dir, filename))
+    browse_directory("distortion")
+    browse_directory("tca")
+    for directory in glob.glob("vignetting*"):
+        browse_directory(directory)
+    candidates_per_group = len(exiv2_candidates) // multiprocessing.cpu_count() + 1
+    candidate_groups = []
+    while exiv2_candidates:
+        candidate_group = exiv2_candidates[:candidates_per_group]
+        if candidate_group:
+            candidate_groups.append(candidate_group)
+        del exiv2_candidates[:candidates_per_group]
 
-    tar = tarfile.open(tar_name, 'w:gz')
+    pool = multiprocessing.Pool()
+    for group_exif_data in pool.map(call_exiv2, candidate_groups):
+        file_exif_data.update(group_exif_data)
+    pool.close()
+    pool.join()
+    for filename in list(file_exif_data):  # list() because I change the dict during iteration
+        lens_model, focal_length, aperture = file_exif_data[filename]
+        if not lens_model:
+            lens_model = "Standard"
+            if not missing_lens_model_warning_printed:
+                print(filename + ":")
+                print("""I couldn't detect the lens model name and assumed "Standard".
+For cameras without interchangeable lenses, this may be correct.
+However, this fails if there is data of different undetectable lenses.
+A newer version of exiv2 (if available) may help.
+(This message is printed only once.)\n""")
+                missing_lens_model_warning_printed = True
+            file_exif_data[filename] = (lens_model, focal_length, aperture)
+        if numpy.isnan(focal_length) or numpy.isnan(aperture):
+            print(filename + ":")
+            print("""Aperture and/or focal length EXIF data is missing in this RAW file.
+You have to rename them according to the scheme "Lens_name--16mm--1.4.RAW"
+(Use your RAW file extension of course.)  Abort.""")
+            sys.exit()
 
-    for f in tar_files:
-        if not os.path.exists(f):
-            continue
 
+    #
+    # Generation TIFFs from distortion RAWs
+    #
+
+    if os.path.exists("distortion"):
+        with chdir("distortion"):
+            pool = multiprocessing.Pool()
+            results = set()
+            for filename in find_raw_files():
+                if not os.path.exists(os.path.splitext(filename)[0] + ".tiff"):
+                    results.add(pool.apply_async(subprocess.call, [generate_raw_conversion_call(filename, ["-w", "-Z", "tiff"])]))
+            pool.close()
+            pool.join()
+            [result.get() for result in results]
+
+
+    #
+    # Parse/generate lenses.txt
+    #
+
+    lens_line_pattern = re.compile(
+        r"(?P<name>.+):\s*(?P<maker>[^,]+)\s*,\s*(?P<mount>[^,]+)\s*,\s*(?P<cropfactor>[^,]+)"
+        r"(\s*,\s*(?P<aspect_ratio>\d+:\d+|[0-9.]+))?(\s*,\s*(?P<type>[^,]+))?")
+    distortion_line_pattern = re.compile(r"\s*distortion\((?P<focal_length>[.0-9]+)mm\)\s*=\s*"
+                                         r"(?P<a>[-.0-9e]+)(?:\s*,\s*(?P<b>[-.0-9e]+)\s*,\s*(?P<c>[-.0-9e]+))?")
+    lenses = {}
+    try:
+        for linenumber, original_line in enumerate(open("lenses.txt")):
+            linenumber += 1
+            line = original_line.strip()
+            if line and not line.startswith("#"):
+                match = lens_line_pattern.match(line)
+                if match:
+                    data = match.groupdict()
+                    current_lens = Lens(data["name"], data["maker"], data["mount"], data["cropfactor"],
+                                        data["aspect_ratio"], data["type"])
+                    lenses[data["name"]] = current_lens
+                else:
+                    match = distortion_line_pattern.match(line)
+                    if not match:
+                        print("Invalid line {0} in lenses.txt:\n{1}Abort.".format(linenumber, original_line))
+                        sys.exit()
+                    data = list(match.groups())
+                    data[0] = float(data[0])
+                    current_lens.add_focal_length(data[0])
+                    if data[2] is None:
+                        current_lens.calibration_lines.append(
+                            """<distortion model="poly3" focal="{0:g}" k1="{1}"/>""".format(data[0], data[1]))
+                    else:
+                        current_lens.calibration_lines.append(
+                            """<distortion model="ptlens" focal="{0:g}" a="{1}" b="{2}" c="{3}"/>""".format(*data))
+    except IOError:
+        focal_lengths = {}
+        for exif_data in file_exif_data.values():
+            focal_lengths.setdefault(exif_data[0], set()).add(exif_data[1])
+        lens_names_by_focal_length = sorted((min(lengths), lens_name) for lens_name, lengths in focal_lengths.items())
+        lens_names_by_focal_length = [item[1] for item in lens_names_by_focal_length]
+        with open("lenses.txt", "w") as outfile:
+            if focal_lengths:
+                outfile.write("""# For suggestions for <maker> and <mount> see
+# <https://github.com/lensfun/lensfun/tree/master/data/db>.
+# <aspect-ratio> is optional and by default 3:2.
+# Omit <type> for rectilinear lenses.
+""")
+                for lens_name in lens_names_by_focal_length:
+                    outfile.write("\n{0}: <maker>, <mount>, <cropfactor>, <aspect-ratio>, <type>\n".format(lens_name))
+                    # FixMe: Only generate focal lengths that are available for
+                    # *distortion*.
+                    for length in sorted(focal_lengths[lens_name]):
+                        outfile.write("distortion({0}mm) = , , \n".format(length))
+            else:
+                outfile.write("""# No RAW images found (or no focal lengths in them).
+# Please have a look at
+# http://wilson.bronger.org/lens_calibration_tutorial/
+""")
+        print("I wrote a template lenses.txt.  Please fill this file with proper information.  Abort.")
+        sys.exit()
+
+
+    #
+    # TCA correction
+    #
+
+    if os.path.exists("tca"):
+        with chdir("tca"):
+            pool = multiprocessing.Pool()
+            results = set()
+            raw_files = find_raw_files()
+            for filename, tiff_filename, tca_filename in pool.map(generate_tca_tiffs, raw_files):
+                if filename:
+                    output = subprocess.check_output(["tca_correct", "-o", "bv" if args.complex_tca else "v", tiff_filename],
+                                                     stderr=open(os.devnull, "w")).splitlines()[-1].strip()
+                    exif_data = file_exif_data[os.path.join("tca", filename)]
+                    with open(tca_filename, "w") as outfile:
+                        outfile.write("{0}\n{1}\n{2}\n".format(exif_data[0], exif_data[1], output.decode("ascii")))
+            pool.close()
+            pool.join()
+            calibration_lines = {}
+            for filename in find_raw_files():
+                lens_name, focal_length, tca_output = [line.rstrip("\n") for line in open(filename + ".tca").readlines()]
+                focal_length = float(focal_length)
+                data = re.match(
+                    r"-r [.0]+:(?P<br>[-.0-9]+):[.0]+:(?P<vr>[-.0-9]+) -b [.0]+:(?P<bb>[-.0-9]+):[.0]+:(?P<vb>[-.0-9]+)",
+                    tca_output).groupdict()
+                open(filename + "_tca.gp", "w").write(
+                    """set title "{}"
+plot [0:1.8] {} * x**2 + {} title "red", {} * x**2 + {} title "blue"
+pause -1""".format(filename, data["br"], data["vr"], data["bb"], data["vb"]))
+                calibration_lines.setdefault(lens_name, []).append((focal_length,
+                    """<tca model="poly3" focal="{0:g}" br="{1}" vr="{2}" bb="{3}" vb="{4}"/>""".format(
+                        focal_length, data["br"], data["vr"], data["bb"], data["vb"]) if args.complex_tca else
+                    """<tca model="poly3" focal="{0:g}" vr="{1}" vb="{2}"/>""".format(
+                        focal_length, data["vr"], data["vb"])))
+            for lens_name, lines in calibration_lines.items():
+                lines.sort()
+                lenses[lens_name].calibration_lines.extend(line[1] for line in lines)
+
+
+    #
+    # Vignetting
+    #
+
+    images = {}
+    distances_per_triplett = {}
+
+    for vignetting_directory in glob.glob("vignetting*"):
+        distance = float(vignetting_directory.partition("_")[2] or "inf")
+        assert distance == float("inf") or distance < 1000
+        with chdir(vignetting_directory):
+            for filename in find_raw_files():
+                exif_data = file_exif_data[os.path.join(vignetting_directory, filename)] + (distance,)
+                distances_per_triplett.setdefault(exif_data[:3], set()).add(distance)
+                images.setdefault(exif_data, []).append(os.path.join(vignetting_directory, filename))
+
+    vignetting_db_entries = {}
+
+    pool = multiprocessing.Pool()
+    results = {}
+    for exif_data, filepaths in images.items():
+        results[exif_data] = pool.apply_async(evaluate_image_set, [exif_data, filepaths])
+    for exif_data, result in results.items():
+        vignetting_db_entries[exif_data] = result.get()
+    pool.close()
+    pool.join()
+
+    new_vignetting_db_entries = {}
+    for configuration, vignetting in vignetting_db_entries.items():
+        triplett = configuration[:3]
+        distances = distances_per_triplett[triplett]
+        if len(distances) == 1 and list(distances)[0] > 10:
+            # If only one distance was measured and at more than 10m, insert it twice
+            # at 10m and ∞, so that the whole range is covered.
+            new_vignetting_db_entries[tuple(configuration[:3] + (10,))] = \
+                new_vignetting_db_entries[tuple(configuration[:3] + (float("inf"),))] = vignetting
+        else:
+            new_vignetting_db_entries[configuration] = vignetting
+    vignetting_db_entries = new_vignetting_db_entries
+
+
+    for configuration in sorted(vignetting_db_entries):
+        lens, focal_length, aperture, distance = configuration
+        vignetting = vignetting_db_entries[configuration]
+        if distance == float("inf"):
+            distance = 1000
         try:
-            tinfo = tar.gettarinfo(name=f)
+            lenses[lens].calibration_lines.append(
+                """<vignetting model="pa" focal="{focal_length:g}" aperture="{aperture:g}" distance="{distance:g}" """
+                """k1="{vignetting[0]:.4f}" k2="{vignetting[1]:.4f}" k3="{vignetting[2]:.4f}"/>""".format(
+                    focal_length=focal_length, aperture=aperture, vignetting=vignetting, distance=distance))
+        except KeyError:
+            print("""Lens "{0}" not found in lenses.txt.  Abort.""".format(lens))
+            sys.exit()
 
-            tinfo.uid = 0
-            tinfo.gid = 0
-            tinfo.uname = "root"
-            tinfo.gname = "root"
-        except OSError:
-            continue
 
-        fh = open(f, "rb")
-        tar.addfile(tinfo, fileobj=fh)
-        fh.close()
-
-    tar.close()
-
-    print("Created lensfun_calibration.tar.gz")
-    print("Open a bug at https://github.com/lensfun/lensfun/issues/ with the data.")
-
-class CustomDescriptionFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
-    pass
-
-def main():
-
-    description = '''
-This is an overview about the calibration steps.\n
-\n
-To setup the required directory structure simply run:
-
-    lens_calibrate.py init
-
-The next step is to copy the RAW files you created to the corresponding
-directories.
-
-Once you have done that run:
-
-    lens_calibrate.py distortion
-
-This will create tiff file you can use to figure out the the lens distortion
-values (a), (b) and (c) using hugin. It will also create a lenses.conf where
-you need to fill out missing values.
-
-If you don't want to do distortion corrections you need to create the
-lenses.conf file manually. It needs to look like this:
-
-    [MODEL NAME]
-    maker =
-    mount =
-    cropfactor =
-    aspect_ratio =
-    type =
-
-The section name needs to be the lens model name you can figure out with:
-
-    exiv2 -g LensModel -pt <raw file>
-
-The required options are:
-
-maker:        is the manufacturer or the lens, e.g. 'FE 16-35mm F2.8 GM'
-mount:        is the name of the mount system, e.g. 'Sony E'
-cropfactor:   is the crop factor of the camera as a float, e.g. '1.0' for full
-              frame
-aspect_ratio: is the aspect ratio of your camera, normally it is '3:2'
-type:         is the type of the lens, e.g. 'normal' for rectilinear lenses.
-              Other possible values are: stereographic, equisolid, stereographic,
-              panoramic or fisheye.
-
-If you want TCA corrections just run:
-
-    lens_calibrate.py tca
-
-If you want vignetting corrections run:
-
-    lens_calibrate.py vignetting
-
-Once you have created data for all corrections you can generate an xml file
-which can be consumed by lensfun. Just call:
-
-    lens_calibrate.py generate_xml
-
-To use the data in your favourite software you just have to copy the generated
-lensfun.xml file to:
-
-    ~/.local/share/lensfun/
-
-If you want to submit the data to the lensfun project run:
-
-    lens_calibrate.py ship
-
-then create a bug report to add the lens calibration data to the project at:
-
-  https://github.com/lensfun/lensfun/issues/
-
-and provide the lensfun_calibratrion.tar.xz
-
------------------------------
-
-'''
-
-    parser = argparse.ArgumentParser(description=description,
-                                     formatter_class=CustomDescriptionFormatter)
-
-    parser.add_argument('--complex-tca',
-                        action='store_true',
-                        help='Turns on non-linear polynomials for TCA')
-    #parser.add_argument('-r, --rawconverter', choices=['darktable', 'dcraw'])
-
-    parser.add_argument('action',
-                        choices=[
-                            'init',
-                            'distortion',
-                            'tca',
-                            'vignetting',
-                            'generate_xml',
-                            'ship'],
-                        help='This runs one of the actions for lens calibration')
-
-    args = parser.parse_args()
-
-    if args.action == 'init':
-        init()
-    elif args.action == 'distortion':
-        run_distortion()
-    elif args.action == 'tca':
-        run_tca(args.complex_tca)
-    elif args.action == 'vignetting':
-        run_vignetting()
-    elif args.action == 'generate_xml':
-        run_generate_xml()
-    elif args.action == 'ship':
-        run_ship()
-
-if __name__ == "__main__":
-    main()
+    outfile = open("lensfun.xml", "w")
+    outfile.write("<lensdatabase>\n")
+    for lens in sorted(lenses.values()):
+        lens.write(outfile)
+    outfile.write("\n</lensdatabase>\n")
