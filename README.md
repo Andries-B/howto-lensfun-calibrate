@@ -15,7 +15,7 @@ https://gitlab.com/cryptomilk/lens_calibrate
 
 ```bash
 $ sudo apt-get install python3-pip python3-venv
-$ sudo apt-get install build-essential python-all-dev libexiv2-dev libboost-python-dev
+$ sudo apt-get install build-essential python3-all-dev libexiv2-dev libboost-python-dev
 
 $ python3 -m venv .venv
 $ source .venv/bin/activate
