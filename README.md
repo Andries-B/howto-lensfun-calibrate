@@ -104,3 +104,6 @@ Exiftool command to determine vignetting compensation mode from raw file
 ```bash
 exiftool -shadingcompensation *.RW2
 ```
+
+# Location of the database / Pre-defined database locations
+https://lensfun.github.io/manual/latest/dbsearch.html
