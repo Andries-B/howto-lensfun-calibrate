@@ -9,13 +9,13 @@ https://pixls.us/articles/create-lens-calibration-data-for-lensfun/
 Original python program lens_calibrate.py:
 https://gitlab.com/cryptomilk/lens_calibrate
 
-# Setting up Python environment (Ubuntu 22.04)
+# Setting up Python environment (Ubuntu 22.04, 24.04)
 
 - [ ] install darktable, hugin, imagemagick (convert) and gnuplot
 
 ```bash
 $ sudo apt-get install python3-pip python3-venv
-$ sudo apt-get install build-essential python-all-dev libexiv2-dev libboost-python-dev
+$ sudo apt-get install build-essential python3-all-dev libexiv2-dev libboost-python-dev
 
 $ python3 -m venv .venv
 $ source .venv/bin/activate
