@@ -107,4 +107,5 @@ exiftool -shadingcompensation *.RW2
 
 # Location of the database / Pre-defined database locations
 https://lensfun.github.io/manual/v0.3.2/dbsearch.html
+
 https://lensfun.github.io/manual/latest/dbsearch.html
