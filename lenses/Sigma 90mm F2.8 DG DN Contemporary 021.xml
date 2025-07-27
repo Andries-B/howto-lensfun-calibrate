@@ -2,13 +2,13 @@
 
     <lens>
         <maker>Sigma</maker>
-        <model>90mm F2.8 DG DN | Contemporary 021 Lenfun standard</model>
-        <model lang="en">Sigma 90mm f/2.8 DG DN | Contemporary 021 Lenfun standard</model>
+        <model>90mm F2.8 DG DN | Contemporary 021 Lensfun standard</model>
+        <model lang="en">Sigma 90mm f/2.8 DG DN | Contemporary 021 Lensfun standard</model>
         <mount>Leica L</mount>
         <mount>Sony E</mount>
         <cropfactor>1.0</cropfactor>
         <calibration>
-            <!-- Taken with Lumix DC-S5, ShadingCompensation Off (camera defaults to On) -->
+            <!-- Taken with Lumix DC-S5, 2024-09-05, ShadingCompensation Off (camera defaults to On) -->
             <distortion model="ptlens" focal="90.0" a="0.000423477" b="0.0223955" c="-0.0173052" />
             <tca model="poly3" focal="90.0" br="0.0000950" vr="0.9997216" bb="-0.0001187" vb="1.0002076" />
             <vignetting model="pa" focal="90.0" aperture="2.8" distance="10" k1="-0.9049500" k2="-0.1627540" k3="0.3099013" />
@@ -59,7 +59,7 @@
         <mount>Leica L</mount>
         <cropfactor>1.0</cropfactor>
         <calibration>
-            <!-- Taken with Lumix DC-S5, ShadingCompensation On -->
+            <!-- Taken with Lumix DC-S5, 2024-09-05, ShadingCompensation On -->
             <distortion model="ptlens" focal="90.0" a="0.000423477" b="0.0223955" c="-0.0173052" />
             <tca model="poly3" focal="90.0" br="0.0000835" vr="0.9997500" bb="-0.0001340" vb="1.0002397" />
             <vignetting model="pa" focal="90.0" aperture="2.8" distance="10" k1="-0.7403787" k2="-0.0179186" k3="0.2323016" />
