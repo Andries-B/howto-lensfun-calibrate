@@ -2,8 +2,8 @@
 
     <lens>
         <maker>Panasonic</maker>
-        <model>Leica DG Summilux 15/F1.7 Lensfun standard</model>
-        <model lang="en">Leica DG Summilux 15mm f/1.7 Lensfun standard</model>
+        <model>Leica DG Summilux 15/F1.7 Asph. Lensfun standard</model>
+        <model lang="en">Leica DG Summilux 15mm f/1.7 Asph. Lensfun standard</model>
         <mount>Micro 4/3 System</mount>
         <aspect-ratio>4:3</aspect-ratio>
         <cropfactor>2.0</cropfactor>
@@ -38,8 +38,8 @@
 
     <lens>
         <maker>Panasonic</maker>
-        <model>Leica DG Summilux 15/F1.7 ShadingCompensation On</model>
-        <model lang="en">Leica DG Summilux 15mm f/1.7 ShadingCompensation On</model>
+        <model>Leica DG Summilux 15/F1.7 Asph. ShadingCompensation On</model>
+        <model lang="en">Leica DG Summilux 15mm f/1.7 Asph. ShadingCompensation On</model>
         <mount>Micro 4/3 System</mount>
         <aspect-ratio>4:3</aspect-ratio>
         <cropfactor>2.0</cropfactor>
