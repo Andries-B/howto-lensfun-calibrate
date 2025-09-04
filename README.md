@@ -110,6 +110,6 @@ https://lensfun.github.io/manual/v0.3.2/dbsearch.html
 
 https://lensfun.github.io/manual/latest/dbsearch.html
 
-Darktable on Windows 11, the path is: C:\Program Files\darktable\share\lensfun\version_1
+On Windows 11, Darktable, the lensfun-database path is: C:\Program Files\darktable\share\lensfun\version_1
 
-DarktablePortable on Windows: ...
+On Windows 11, DarktablePortable, the lensfun-database path is: ...\darktablePortable\App\darktable\share\lensfun\version_1
