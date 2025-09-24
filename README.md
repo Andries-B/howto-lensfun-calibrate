@@ -14,6 +14,7 @@ https://gitlab.com/cryptomilk/lens_calibrate
 - [ ] install darktable, hugin, imagemagick (convert) and gnuplot
 
 ```bash
+copy [this_github/src/*] [your_directory]
 $ sudo apt-get install python3-pip python3-venv
 $ sudo apt-get install build-essential python3-all-dev libexiv2-dev libboost-python-dev
 
